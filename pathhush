@@ -1,0 +1,163 @@
+#!/bin/sh
+set -eu
+VERSION="0.1.0"
+REPO="${PATHHUSH_REPO:-MatthewScholefield/pathhush}"
+REF="${PATHHUSH_REF:-main}"
+err(){ printf 'pathhush: %s\n' "$*" >&2; }
+die(){ err "$*"; exit 1; }
+usage(){ cat <<'EOF'
+Usage:
+  pathhush create NAME [VALUE] [--env FILE]
+  pathhush create NAME --stdin [--env FILE]
+  pathhush path NAME
+  pathhush env NAME
+  pathhush list
+  pathhush remove NAME
+  pathhush init
+  pathhush doctor
+  pathhush update
+  pathhush version
+EOF
+}
+uid(){ id -u; }
+gid(){ id -g; }
+state_dir(){
+  if [ -n "${PATHHUSH_STATE_DIR:-}" ]; then printf '%s\n' "$PATHHUSH_STATE_DIR"
+  elif [ -n "${XDG_STATE_HOME:-}" ]; then printf '%s/pathhush\n' "$XDG_STATE_HOME"
+  else printf '%s/.local/state/pathhush\n' "$HOME"; fi
+}
+vault_root(){
+  if [ -n "${PATHHUSH_ROOT:-}" ]; then printf '%s\n' "$PATHHUSH_ROOT"; return; fi
+  case "$(uname -s 2>/dev/null || printf unknown)" in
+    Darwin) printf '%s\n' '/usr/local/var/pathhush' ;;
+    *) printf '%s\n' '/var/lib/pathhush' ;;
+  esac
+}
+vault_dir(){ printf '%s/u%s\n' "$(vault_root)" "$(uid)"; }
+index_file(){ printf '%s/index.tsv\n' "$(state_dir)"; }
+run_root(){
+  if [ "$(uid)" -eq 0 ]; then "$@"
+  elif command -v sudo >/dev/null 2>&1; then sudo "$@"
+  else die "initial setup needs root; install sudo or create $(vault_root) manually"; fi
+}
+ensure_state(){
+  d=$(state_dir); mkdir -p "$d"; chmod 700 "$d" 2>/dev/null || true
+  idx=$(index_file)
+  if [ ! -e "$idx" ]; then umask 077; : > "$idx"; fi
+  chmod 600 "$idx" 2>/dev/null || true
+}
+ensure_vault(){
+  root=$(vault_root); vault=$(vault_dir)
+  if [ -n "${PATHHUSH_ROOT:-}" ]; then
+    mkdir -p "$root" "$vault"; chmod 711 "$root"; chmod 300 "$vault"; ensure_state; return
+  fi
+  if [ ! -d "$root" ]; then
+    printf 'Pathhush needs one-time setup at %s.\n' "$root" >&2
+    run_root mkdir -p "$root"
+  fi
+  run_root chown root:root "$root"; run_root chmod 711 "$root"
+  if [ ! -d "$vault" ]; then run_root mkdir -p "$vault"; run_root chown "$(uid):$(gid)" "$vault"; fi
+  chmod 300 "$vault" 2>/dev/null || run_root chmod 300 "$vault"
+  ensure_state
+}
+validate_name(){
+  [ -n "$1" ] || die "secret name cannot be empty"
+  case "$1" in *[!A-Za-z0-9_.-]*) die "secret name may contain only A-Z, a-z, 0-9, _, . and -" ;; esac
+}
+random_hex(){
+  if command -v od >/dev/null 2>&1; then dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  elif command -v openssl >/dev/null 2>&1; then openssl rand -hex 16
+  else die "need od+/dev/urandom or openssl"; fi
+}
+index_get(){ awk -F '\t' -v n="$1" '$1 == n { p=$2 } END { if (p != "") print p }' "$(index_file)"; }
+index_set(){
+  name=$1; path=$2; idx=$(index_file); tmp=$(mktemp "$(state_dir)/.index.XXXXXX")
+  awk -F '\t' -v n="$name" '$1 != n' "$idx" > "$tmp"
+  printf '%s\t%s\n' "$name" "$path" >> "$tmp"; chmod 600 "$tmp"; mv "$tmp" "$idx"
+}
+index_remove(){
+  name=$1; idx=$(index_file); tmp=$(mktemp "$(state_dir)/.index.XXXXXX")
+  awk -F '\t' -v n="$name" '$1 != n' "$idx" > "$tmp"; chmod 600 "$tmp"; mv "$tmp" "$idx"
+}
+prompt_secret(){
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    old=$(stty -g </dev/tty) || die "could not configure terminal"
+    trap 'stty "$old" </dev/tty 2>/dev/null || true' EXIT HUP INT TERM
+    printf 'Secret value: ' >/dev/tty; stty -echo </dev/tty
+    IFS= read -r secret </dev/tty || secret=''
+    stty "$old" </dev/tty; trap - EXIT HUP INT TERM; printf '\n' >/dev/tty; printf '%s' "$secret"
+  else
+    IFS= read -r secret || secret=''; printf '%s' "$secret"
+  fi
+}
+write_env_line(){
+  env_file=$1; name=$2; path=$3; key="${name}_FILE"
+  [ -d "$(dirname "$env_file")" ] || die "directory for $env_file does not exist"
+  tmp=$(mktemp "${env_file}.pathhush.XXXXXX")
+  if [ -e "$env_file" ]; then cp -p "$env_file" "$tmp"; else chmod 600 "$tmp"; fi
+  awk -v prefix="$key=" -v newline="$key=$path" '
+    BEGIN { done=0 }
+    index($0,prefix)==1 { if(!done){print newline;done=1}; next }
+    { print }
+    END { if(!done) print newline }
+  ' "$env_file" 2>/dev/null > "${tmp}.new" || printf '%s=%s\n' "$key" "$path" > "${tmp}.new"
+  cat "${tmp}.new" > "$tmp"; rm -f "${tmp}.new"; mv "$tmp" "$env_file"
+}
+create_secret(){
+  [ "$#" -ge 1 ] || die "create requires NAME"
+  name=$1; shift; validate_name "$name"
+  value_set=0; value=''; from_stdin=0; env_file=''
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --stdin) from_stdin=1; shift ;;
+      --env) [ "$#" -ge 2 ] || die "--env requires a file path"; env_file=$2; shift 2 ;;
+      --) shift; [ "$#" -eq 1 ] || die "expected exactly one VALUE after --"; value=$1; value_set=1; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) [ "$value_set" -eq 0 ] || die "multiple secret values provided"; value=$1; value_set=1; shift ;;
+    esac
+  done
+  [ "$from_stdin" -eq 0 ] || [ "$value_set" -eq 0 ] || die "use either VALUE or --stdin, not both"
+  ensure_vault; vault=$(vault_dir)
+  if [ "$from_stdin" -eq 1 ]; then IFS= read -r value || value=''
+  elif [ "$value_set" -eq 0 ]; then value=$(prompt_secret); fi
+  [ -n "$value" ] || die "refusing to create an empty secret"
+  old_path=$(index_get "$name" || true)
+  while :; do
+    path="$vault/$name--$(random_hex)"
+    if (umask 077; set -C; : > "$path") 2>/dev/null; then break; fi
+  done
+  printf '%s' "$value" > "$path"; chmod 600 "$path"; index_set "$name" "$path"
+  if [ -n "$old_path" ] && [ "$old_path" != "$path" ]; then rm -f "$old_path" 2>/dev/null || true; fi
+  if [ -n "$env_file" ]; then write_env_line "$env_file" "$name" "$path"; printf 'Updated %s with %s_FILE\n' "$env_file" "$name"; fi
+  printf '%s_FILE=%s\n' "$name" "$path"
+}
+cmd_path(){ [ "$#" -eq 1 ] || die "path requires NAME"; ensure_vault; p=$(index_get "$1" || true); [ -n "$p" ] || die "no secret named $1"; printf '%s\n' "$p"; }
+cmd_env(){ [ "$#" -eq 1 ] || die "env requires NAME"; ensure_vault; p=$(index_get "$1" || true); [ -n "$p" ] || die "no secret named $1"; printf '%s_FILE=%s\n' "$1" "$p"; }
+cmd_list(){ ensure_vault; idx=$(index_file); if [ ! -s "$idx" ]; then printf 'No secrets.\n'; return; fi; awk -F '\t' '{printf "%-32s %s\n",$1,$2}' "$idx"; }
+cmd_remove(){ [ "$#" -eq 1 ] || die "remove requires NAME"; ensure_vault; p=$(index_get "$1" || true); [ -n "$p" ] || die "no secret named $1"; rm -f "$p"; index_remove "$1"; printf 'Removed %s\n' "$1"; }
+cmd_doctor(){
+  ensure_vault; root=$(vault_root); vault=$(vault_dir)
+  printf 'Version:    %s\nVault root: %s\nUser vault: %s\nIndex:      %s\n' "$VERSION" "$root" "$vault" "$(index_file)"
+  if [ "$(uid)" -eq 0 ]; then printf 'Warning: root bypasses this permission boundary.\n'; fi
+  if [ -x "$vault" ] && [ -w "$vault" ]; then printf 'Traverse/write: OK\n'; else printf 'Traverse/write: FAIL\n'; exit 1; fi
+  if [ "$(uid)" -ne 0 ] && [ -r "$vault" ]; then printf 'Directory listing protection: FAIL\n'; exit 1; else printf 'Directory listing protection: OK\n'; fi
+  printf 'Exact-path secret files remain readable by your user by design.\n'
+}
+cmd_update(){
+  command -v curl >/dev/null 2>&1 || die "curl is required for update"
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/install.sh" | sh
+}
+cmd=${1:-help}; [ "$#" -eq 0 ] || shift
+case "$cmd" in
+  create|create-secret) create_secret "$@" ;;
+  path) cmd_path "$@" ;;
+  env) cmd_env "$@" ;;
+  list) cmd_list "$@" ;;
+  remove|rm|delete) cmd_remove "$@" ;;
+  init) ensure_vault; printf 'Pathhush ready: %s\n' "$(vault_dir)" ;;
+  doctor) cmd_doctor ;;
+  update|upgrade) cmd_update ;;
+  version|--version|-V) printf 'pathhush %s\n' "$VERSION" ;;
+  help|--help|-h) usage ;;
+  *) err "unknown command: $cmd"; usage >&2; exit 2 ;;
+esac
