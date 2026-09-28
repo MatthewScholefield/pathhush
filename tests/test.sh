@@ -16,7 +16,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 OUT=$(printf '%s\n' 'test-secret-value' | "$BIN" create OPENAI_API_KEY --stdin)
-PATH_VALUE=${OUT#OPENAI_API_KEY_FILE=}
+PATH_VALUE=$OUT
 [ -f "$PATH_VALUE" ]
 [ "$(cat "$PATH_VALUE")" = 'test-secret-value' ]
 [ "$("$BIN" path OPENAI_API_KEY)" = "$PATH_VALUE" ]
@@ -29,7 +29,7 @@ NEW_PATH=$("$BIN" path OPENAI_API_KEY)
 [ "$NEW_PATH" != "$PATH_VALUE" ]
 [ ! -e "$PATH_VALUE" ]
 [ "$(cat "$NEW_PATH")" = 'rotated-value' ]
-grep -F "OPENAI_API_KEY_FILE=$NEW_PATH" "$ENVFILE" >/dev/null
+grep -F "OPENAI_API_KEY_FILE=$NEW_PATH" "$ENVFILE" >/dev/null\n\nARG_PATH=$("$BIN" create ARG_SECRET "from-argument" 2>/dev/null)\n[ "$(cat "$ARG_PATH")" = "from-argument" ]
 
 "$BIN" remove OPENAI_API_KEY >/dev/null
 [ ! -e "$NEW_PATH" ]
