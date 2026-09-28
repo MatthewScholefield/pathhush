@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-VERSION="0.1.0"
+VERSION="0.1.1"
 REPO="${PATHHUSH_REPO:-MatthewScholefield/pathhush}"
 REF="${PATHHUSH_REF:-main}"
 err(){ printf 'pathhush: %s\n' "$*" >&2; }
@@ -110,7 +110,7 @@ create_secret(){
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --stdin) from_stdin=1; shift ;;
-      --env) [ "$#" -ge 2 ] || die "--env requires a file path"; env_file=$2; shift 2 ;;
+      --env-file|--env) [ "$#" -ge 2 ] || die "$1 requires a file path"; env_file=$2; shift 2 ;;
       --) shift; [ "$#" -eq 1 ] || die "expected exactly one VALUE after --"; value=$1; value_set=1; shift ;;
       -*) die "unknown option: $1" ;;
       *) [ "$value_set" -eq 0 ] || die "multiple secret values provided"; value=$1; value_set=1; shift ;;
