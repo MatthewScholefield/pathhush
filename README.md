@@ -1,14 +1,12 @@
 # pathhush
 
-Tiny secret files that are harder to stumble into.
+*A simple tool to dump secrets into files*
 
-## install
+Instead of putting secrets in .env files and making it easy for agents to accidentally read them, just put them in separate files.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/MatthewScholefield/pathhush/main/install.sh | sh
-```
+This tool does simply that—give it a secret name and value and it writes it to a randomly generated file path on your system in a provisioned folder that has restricted listing permissions so only root can list the contents.
 
-## use
+Additional benefit: If all your actual secrets are in separate files then you can instruct agents to directly modify .env files without worrying about secrets leaking into LLM provider logs.
 
 ```sh
 $ pathhush create OPENAI_API_KEY
@@ -29,13 +27,17 @@ Or, if you happen to use env files:
 pathhush create OPENAI_API_KEY --env-file .env
 ```
 
-The value lives in a non-listable directory. Know the exact path? You can read it. Don't? `ls`, globs, `find`, IDE scans, etc. don't casually discover it.
+## install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MatthewScholefield/pathhush/main/install.sh | sh
+```
 
 ## stuff
 
 ```sh
 pathhush create NAME                 # hidden prompt
-pathhush create NAME 'secret value'  # scripts
+pathhush create NAME 'secret value'  # for use in scripts
 pathhush create NAME --stdin
 pathhush create NAME --env-file .env
 pathhush path NAME
@@ -48,10 +50,6 @@ pathhush update
 
 Linux: `/var/lib/pathhush`. macOS: `/usr/local/var/pathhush`.
 
-## security-ish
+## security
 
-Not a real secret manager. Malicious code running as you can read a known path.
-
-Basically a small step up from plaintext in `.env`: harder for an AI agent, recursive search, editor indexer, or dumb scanner to accidentally inhale.
-
-That's it.
+This is not a real secret manager. Items are encoded in plain text and directly readable by the current user. So this is basically meant as a convenience to prevent accidentally exposing secrets not as a truly secure secret storage system.
