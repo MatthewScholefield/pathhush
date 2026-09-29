@@ -15,7 +15,7 @@ Secret path: /var/lib/pathhush/u1000/OPENAI_API_KEY--8c62...
 /var/lib/pathhush/u1000/OPENAI_API_KEY--8c62...
 ```
 
-The last line is stdout. So:
+The last line is stdout. Save that path somewhere your app knows about—Pathhush intentionally does not keep an index of it.
 
 ```sh
 secret_path=$(pathhush create OPENAI_API_KEY 'sk-whatever')
@@ -40,16 +40,19 @@ pathhush create NAME                 # hidden prompt
 pathhush create NAME 'secret value'  # for use in scripts
 pathhush create NAME --stdin
 pathhush create NAME --env-file .env
-pathhush path NAME
-pathhush env NAME
-pathhush list
-pathhush remove NAME
 pathhush doctor
 pathhush update
+
+sudo pathhush list                   # root-only discovery
+sudo pathhush remove NAME            # removes all files for NAME
 ```
+
+There is deliberately no `path`, `env`, or unprivileged `list`. If you lose a path, use `sudo pathhush list`.
 
 Linux: `/var/lib/pathhush`. macOS: `/usr/local/var/pathhush`.
 
 ## security
 
-This is not a real secret manager. Items are encoded in plain text and directly readable by the current user. So this is basically meant as a convenience to prevent accidentally exposing secrets not as a truly secure secret storage system.
+This is not a real secret manager. Items are encoded in plain text and directly readable by the current user *if the exact path is known*. So this is basically meant as a convenience to prevent accidentally exposing secrets, not as a truly secure secret storage system.
+
+The secret directory isn't listable by the normal user and Pathhush keeps no user-readable index. Root can still list everything, and malicious code that learns an exact path can read it.
