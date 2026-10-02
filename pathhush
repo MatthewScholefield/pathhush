@@ -159,7 +159,7 @@ cmd_list(){
   found=0
   for path in "$vault"/*; do
     [ -e "$path" ] || continue
-    basename "$path"
+    printf '%s\n' "$path"
     found=1
   done
   [ "$found" -eq 1 ] || printf 'No secrets.\n'
