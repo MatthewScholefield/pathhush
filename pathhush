@@ -155,14 +155,11 @@ create_secret(){
 cmd_list(){
   require_admin
   ensure_vault
-  vault=$(vault_dir)
-  found=0
+  vault=$(CDPATH= cd -- "$(vault_dir)" && pwd -P)
   for path in "$vault"/*; do
     [ -e "$path" ] || continue
     printf '%s\n' "$path"
-    found=1
   done
-  [ "$found" -eq 1 ] || printf 'No secrets.\n'
 }
 
 cmd_remove(){

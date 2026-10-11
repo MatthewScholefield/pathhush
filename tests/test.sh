@@ -9,6 +9,9 @@ BIN="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/pathhush"
 "$BIN" init >/dev/null
 VAULT="$PATHHUSH_ROOT/u$(id -u)"
 [ -x "$VAULT" ] && [ -w "$VAULT" ]
+if [ "$(id -u)" -eq 0 ]; then
+  [ -z "$("$BIN" list)" ]
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   [ ! -r "$VAULT" ]
@@ -40,9 +43,14 @@ if "$BIN" env OPENAI_API_KEY >/dev/null 2>&1; then echo "FAIL: env command shoul
 
 # Root CI can exercise administrative enumeration/removal directly.
 if [ "$(id -u)" -eq 0 ]; then
-  "$BIN" list | grep -F "$(basename "$PATH_VALUE")" >/dev/null
+  EXPECTED=$(printf '%s\n' "$ARG_PATH" "$ENV_PATH" "$PATH_VALUE")
+  [ "$("$BIN" list)" = "$EXPECTED" ]
+  [ "$(CDPATH= cd -- "$ROOT" && PATHHUSH_ROOT=vault "$BIN" list)" = "$EXPECTED" ]
   "$BIN" remove OPENAI_API_KEY >/dev/null
   [ ! -e "$PATH_VALUE" ]
+  "$BIN" remove ARG_SECRET >/dev/null
+  "$BIN" remove ENV_SECRET >/dev/null
+  [ -z "$("$BIN" list)" ]
 fi
 
 echo "All Pathhush tests passed."
